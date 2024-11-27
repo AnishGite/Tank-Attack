@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tank Combat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-600 to-indigo-800 min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="container max-w-6xl mx-auto bg-white/10 rounded-2xl shadow-2xl backdrop-blur-lg p-6">
+        <div class="flex flex-col items-center">
+            <div id="gameStatus" class="text-3xl font-bold text-white mb-4 text-center">
+                Tank Combat
+            </div>
+            
+            <canvas id="gameCanvas" class="bg-white/20 border-4 border-white/30 rounded-xl shadow-lg mb-6"></canvas>
+            
+            <div id="playerControls" class="w-full max-w-3xl">
+                <div class="grid grid-cols-5 gap-4">
+                    <button id="angleLeftBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-lg transition-all shadow-md">
+                        ← Angle
+                    </button>
+                    <button id="angleRightBtn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-lg transition-all shadow-md">
+                        Angle →
+                    </button>
+                    <button id="powerDownBtn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition-all shadow-md">
+                        Power -
+                    </button>
+                    <button id="powerUpBtn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg transition-all shadow-md">
+                        Power +
+                    </button>
+                    <button id="fireBtn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg transition-all shadow-md">
+                        FIRE!
+                    </button>
+                </div>
+                
+                <div id="currentStats" class="mt-4 flex justify-center space-x-6 text-white">
+                    <div class="bg-white/20 px-4 py-2 rounded-lg">
+                        <span class="font-semibold">Angle: </span>
+                        <span id="angleDisplay">45°</span>
+                    </div>
+                    <div class="bg-white/20 px-4 py-2 rounded-lg">
+                        <span class="font-semibold">Power: </span>
+                        <span id="powerDisplay">50</span>
+                    </div>
+                    <div class="bg-white/20 px-4 py-2 rounded-lg">
+                        <span class="font-semibold">Wind: </span>
+                        <span id="windDisplay">0.0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            class TankGame {
+                constructor() {
+                    this.canvas = document.getElementById('gameCanvas');
+                    this.ctx = this.canvas.getContext('2d');
+                    this.canvas.width = 1200;
+                    this.canvas.height = 600;
+
+                    // Game state
+                    this.terrain = [];
+                    this.tanks = [];
+                    this.projectiles = [];
+                    this.wind = Math.random() * 4 - 2; // Random wind between -2 and 2
+                    this.currentPlayer = 0;
+                    this.gameOver = false;
+
+                    // Control elements
+                    this.angleLeftBtn = document.getElementById('angleLeftBtn');
+                    this.angleRightBtn = document.getElementById('angleRightBtn');
+                    this.powerDownBtn = document.getElementById('powerDownBtn');
+                    this.powerUpBtn = document.getElementById('powerUpBtn');
+                    this.fireBtn = document.getElementById('fireBtn');
+                    this.angleDisplay = document.getElementById('angleDisplay');
+                    this.powerDisplay = document.getElementById('powerDisplay');
+                    this.windDisplay = document.getElementById('windDisplay');
+                    this.gameStatusDisplay = document.getElementById('gameStatus');
+
+                    this.generateTerrain();
+                    this.createTanks();
+                    this.setupEventListeners();
+                    this.updateWindDisplay();
+                    this.gameLoop();
+                }
+
+                setupEventListeners() {
+                    this.angleLeftBtn.addEventListener('click', () => this.adjustAngle(-5));
+                    this.angleRightBtn.addEventListener('click', () => this.adjustAngle(5));
+                    this.powerDownBtn.addEventListener('click', () => this.adjustPower(-5));
+                    this.powerUpBtn.addEventListener('click', () => this.adjustPower(5));
+                    this.fireBtn.addEventListener('click', () => this.fireTankShell());
+                }
+
+                adjustAngle(delta) {
+                    const currentTank = this.tanks[this.currentPlayer];
+                    currentTank.angle = Math.max(0, Math.min(180, currentTank.angle + delta));
+                    this.angleDisplay.textContent = `${currentTank.angle}°`;
+                }
+
+                adjustPower(delta) {
+                    const currentTank = this.tanks[this.currentPlayer];
+                    currentTank.power = Math.max(10, Math.min(100, currentTank.power + delta));
+                    this.powerDisplay.textContent = currentTank.power;
+                }
+
+                fireTankShell() {
+                    const currentTank = this.tanks[this.currentPlayer];
+                    const angle = currentTank.angle * Math.PI / 180;
+                    const power = currentTank.power;
+
+                    // Starting position of the projectile
+                    const projectile = {
+                        x: currentTank.x + Math.cos(angle) * 30,
+                        y: currentTank.y - currentTank.height/2 - Math.sin(angle) * 30,
+                        vx: Math.cos(angle) * power / 10,
+                        vy: -Math.sin(angle) * power / 10,
+                        gravity: 0.2,
+                        radius: 5
+                    };
+
+                    this.projectiles.push(projectile);
+                }
+
+                updateProjectiles() {
+                    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                        const p = this.projectiles[i];
+                        
+                        // Apply wind
+                        p.vx += this.wind / 50;
+                        
+                        // Apply gravity
+                        p.vy += p.gravity;
+                        
+                        // Update position
+                        p.x += p.vx;
+                        p.y += p.vy;
+
+                        // Check for collision with terrain or tanks
+                        if (this.checkCollision(p)) {
+                            this.projectiles.splice(i, 1);
+                            this.switchPlayers();
+                            break;
+                        }
+
+                        // Remove projectile if it goes off screen
+                        if (p.x < 0 || p.x > this.canvas.width || p.y > this.canvas.height) {
+                            this.projectiles.splice(i, 1);
+                            this.switchPlayers();
+                            break;
+                        }
+                    }
+                }
+
+                checkCollision(projectile) {
+                    // Check terrain collision
+                    const terrainIndex = Math.floor(projectile.x / 10);
+                    if (terrainIndex < 0 || terrainIndex >= this.terrain.length) return true;
+                    
+                    if (projectile.y >= this.terrain[terrainIndex].y) {
+                        return true;
+                    }
+
+                    // Check tank collision
+                    for (let tank of this.tanks) {
+                        if (this.circleRectCollision(projectile, tank)) {
+                            tank.health -= 20;
+                            if (tank.health <= 0) {
+                                this.endGame();
+                            }
+                            return true;
+                        }
+                    }
+
+                    return false;
+                }
+
+                circleRectCollision(circle, rect) {
+                    const distX = Math.abs(circle.x - rect.x);
+                    const distY = Math.abs(circle.y - (rect.y - rect.height/2));
+
+                    if (distX > (rect.width/2 + circle.radius)) return false;
+                    if (distY > (rect.height/2 + circle.radius)) return false;
+
+                    return true;
+                }
+
+                switchPlayers() {
+                    this.currentPlayer = 1 - this.currentPlayer;
+                    this.wind = Math.random() * 4 - 2; // Randomize wind
+                    this.updateWindDisplay();
+                }
+
+                endGame() {
+                    this.gameOver = true;
+                    const winner = this.tanks[1 - this.currentPlayer];
+                    const winnerColor = winner.color === '#3B82F6' ? 'Blue' : 'Red';
+                    this.gameStatusDisplay.textContent = `${winnerColor} Tank Wins!`;
+                }
+
+                gameLoop() {
+                    if (!this.gameOver) {
+                        this.updateProjectiles();
+                        this.draw();
+                        requestAnimationFrame(() => this.gameLoop());
+                    }
+                }
+
+                updateWindDisplay() {
+                    this.windDisplay.textContent = this.wind.toFixed(1);
+                }
+
+                generateTerrain() {
+                    this.terrain = [];
+                    let lastHeight = this.canvas.height * 0.6;
+                    
+                    for (let x = 0; x < this.canvas.width; x += 10) {
+                        lastHeight += Math.random() * 20 - 10;
+                        lastHeight = Math.max(this.canvas.height * 0.4, 
+                                     Math.min(this.canvas.height * 0.8, lastHeight));
+                        this.terrain.push({ x, y: lastHeight });
+                    }
+                }
+
+                getTerrainHeight(x) {
+                    const index = Math.floor(x / 10);
+                    return this.terrain[index]?.y || this.canvas.height * 0.6;
+                }
+
+                createTanks() {
+                    const tank1X = this.canvas.width * 0.2;
+                    const tank2X = this.canvas.width * 0.8;
+
+                    this.tanks = [
+                        {
+                            x: tank1X,
+                            y: this.getTerrainHeight(tank1X),
+                            angle: 45,
+                            power: 50,
+                            health: 100,
+                            color: '#3B82F6', // Tailwind blue-500
+                            width: 40,
+                            height: 20
+                        },
+                        {
+                            x: tank2X,
+                            y: this.getTerrainHeight(tank2X),
+                            angle: 135,
+                            power: 50,
+                            health: 100,
+                            color: '#EF4444', // Tailwind red-500
+                            width: 40,
+                            height: 20
+                        }
+                    ];
+                }
+
+                draw() {
+                    // Clear canvas
+                    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                    // Gradient sky background
+                    const skyGradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+                    skyGradient.addColorStop(0, '#60A5FA'); // Tailwind blue-400
+                    skyGradient.addColorStop(1, '#3B82F6'); // Tailwind blue-500
+                    this.ctx.fillStyle = skyGradient;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                    // Draw terrain with gradient
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, this.canvas.height);
+                    this.terrain.forEach(point => {
+                        this.ctx.lineTo(point.x, point.y);
+                    });
+                    this.ctx.lineTo(this.canvas.width, this.canvas.height);
+                    this.ctx.closePath();
+                    
+                    const terrainGradient = this.ctx.createLinearGradient(0, this.canvas.height * 0.6, 0, this.canvas.height);
+                    terrainGradient.addColorStop(0, '#4ADE80'); // Tailwind green-400
+                    terrainGradient.addColorStop(1, '#22C55E'); // Tailwind green-500
+                    this.ctx.fillStyle = terrainGradient;
+                    this.ctx.fill();
+
+                    // Draw tanks with barrel
+                    this.tanks.forEach(tank => {
+                        // Tank body
+                        this.ctx.fillStyle = tank.color;
+                        this.ctx.fillRect(
+                            tank.x - tank.width/2, 
+                            tank.y - tank.height, 
+                            tank.width, 
+                            tank.height
+                        );
+
+                        // Tank barrel
+                        this.ctx.save();
+                        this.ctx.translate(tank.x, tank.y - tank.height/2);
+                        this.ctx.rotate(-tank.angle * Math.PI / 180);
+                        this.ctx.fillStyle = '#4B5563'; // Tailwind gray-600
+                        this.ctx.fillRect(0, -5, 30, 10);
+                        this.ctx.restore();
+
+                        // Health bar
+                        this.ctx.fillStyle = '#EF4444'; // Tailwind red-500
+                        this.ctx.fillRect(
+                            tank.x - 20, 
+                            tank.y - tank.height - 10, 
+                            (tank.health / 100) * 40, 
+                            5
+                        );
+                    });
+
+                    // Draw projectiles
+                    this.ctx.fillStyle = '#1F2937'; // Tailwind gray-800
+                    this.projectiles.forEach(p => {
+                        this.ctx.beginPath();
+                        this.ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    });
+                }
+            }
+
+            new TankGame();
+        });
+    </script>
+</body>
+</html>
